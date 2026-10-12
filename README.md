@@ -4,6 +4,42 @@ Each numbered directory in `examples/` is a self-contained project. It owns its 
 
 Run all `make` commands from the repository root with Docker running, Docker Compose v2 and Make available. Install `fzf` for interactive example selection (`brew install fzf` on macOS), or pass `EXAMPLE` explicitly. Native builds in Examples 03, 07 and 09 can take several minutes; allow at least 8 GiB of available Docker memory for the Spring native builds. Use `make help` to see the commands and options.
 
+## What Spring AOT, JVM AOT and GraalVM do
+
+**AOT means ahead of time:** preparing work before an application's normal execution. These technologies prepare different parts of the application, so their outputs and runtime requirements differ.
+
+**Spring AOT** analyzes a Spring application during the build and generates code for registering and initializing its beans—the objects managed by Spring. It also produces metadata describing reflection, resources and proxies needed by native compilation. It is used to reduce Spring's discovery work at startup and prepare Spring applications for Native Image. Generated initialization can run on a JVM or be compiled into a native executable. Bean selection, including conditions and profiles that determine which beans exist, is decided during the build. [Spring AOT documentation](https://docs.spring.io/spring-framework/reference/core/aot.html).
+
+**JVM AOT**, in this repository, means **HotSpot's AOT cache in Java 25**. A training run records information that the JVM turns into a reusable cache of prepared class data and method-execution profiles. Later runs reuse class-loading and linking work; recorded profiles help the just-in-time (JIT) compiler optimize code sooner. It is used to improve startup and warmup while continuing to run the application on HotSpot with runtime JIT compilation. The cache belongs to its matching JVM and application deployment, so changed deployments need a matching cache. [Java 25 AOT features](https://docs.oracle.com/en/java/javase/25/migrate/significant-changes-jdk-25.html).
+
+**GraalVM** provides a Java development kit and compiler technologies, including an optimizing JIT compiler and **Native Image**, the tool used by these examples. Native Image analyzes Java bytecode and compiles reachable application code, dependencies and necessary runtime components into an executable for a specific operating system and CPU architecture. It is used when fast startup and a smaller runtime memory footprint are priorities, such as CLI tools, services that scale from zero and serverless workloads. The executable includes its runtime and garbage collector and runs without an installed JVM. Native compilation adds build time, and dynamic reflection or resource access may need explicit metadata. [GraalVM](https://www.graalvm.org/), [Native Image documentation](https://www.graalvm.org/jdk25/reference-manual/native-image/).
+
+| Technology used here | Prepared output | Application runtime | Examples |
+| --- | --- | --- | --- |
+| Spring AOT | Generated initialization code and native metadata | HotSpot or a native executable | 05, 07, 08, 09 |
+| JVM AOT cache | A cache trained for the matching deployment | HotSpot JVM | 02, 06, 08, 09 |
+| GraalVM Native Image | Compiled native executable | Included native runtime | 03, 07, 09 |
+
+Spring AOT can be combined with the JVM cache (Example 08), or with Native Image (Example 07). A native executable runs without HotSpot and cannot consume its AOT cache. Example 09 compares both supported combinations and the individual JVM variants. The benchmarks measure startup, memory and preparation costs rather than assuming every optimization improves every workload.
+
+## The application we are testing
+
+The examples use a small product catalog and quote calculator. At startup, the application loads eight products, such as a keyboard, mouse and monitor, from a bundled `catalog.csv` resource into memory. It looks up products by ID, calculates order totals using integer cents, and applies a 10% discount when the subtotal reaches 20,000 cents. The sample order contains two keyboards and one mouse: subtotal 22,300 cents, discount 2,230 cents, and total 20,070 cents.
+
+The application also runs a bounded CPU computation that produces a deterministic checksum. `ITERATIONS` controls the amount of work, with 100,000 iterations by default. The benchmark independently calculates the expected checksum and verifies business results so each runtime must perform the same useful work.
+
+Examples 01–03 expose this workload as a CLI: load the catalog, calculate the sample quote, run the computation, print one JSON result and exit. Examples 04–09 expose the catalog workload through a Spring Boot HTTP service:
+
+| Request | What it does |
+| --- | --- |
+| `GET /ready` | Reports application readiness, product count and runtime/AOT details |
+| `GET /products/1` | Returns the keyboard's ID, name and price |
+| `POST /quotes` | Accepts product quantities and returns subtotal, discount and total |
+| `GET /compute?iterations=100000` | Runs the computation and returns its checksum |
+| `GET /native-metadata` (07–09) | Exercises bundled resource access and dynamic reflection |
+
+The catalog and calculations need no database or external service. This keeps the workload repeatable while exercising resource loading, application initialization, computation and, for HTTP examples, request handling and JSON serialization. CLI benchmarks measure time to finish; HTTP benchmarks measure readiness, first useful responses and optional paced request load. Each example owns its implementation, and comparisons within an example change how the application is prepared and executed while preserving its business results.
+
 ## 01 — Plain Java JVM baseline
 
 [01-plain-java](examples/01-plain-java/README.md) is a Java 25 catalog CLI running on the standard HotSpot JVM. It establishes the baseline for later JVM AOT-cache and GraalVM Native Image examples.
