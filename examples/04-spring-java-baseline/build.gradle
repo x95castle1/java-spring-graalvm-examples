@@ -1,0 +1,31 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '4.1.1'
+}
+
+group = 'dev.aotexamples'
+version = '1.0.0'
+
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(25) }
+}
+repositories { mavenCentral() }
+
+tasks.named('test') {
+    useJUnitPlatform()
+    maxHeapSize = '256m'
+}
+tasks.withType(AbstractArchiveTask).configureEach {
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
+
+dependencies {
+    implementation platform('org.springframework.boot:spring-boot-dependencies:4.1.1')
+    implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+springBoot { mainClass = 'dev.aotexamples.spring.CatalogApplication' }
+tasks.named('bootJar') { archiveFileName = 'catalog-service.jar' }
+tasks.named('jar') { enabled = false }

@@ -1,0 +1,69 @@
+name: aot-example-03-plain-graalvm-native
+
+x-java-image: &java-image eclipse-temurin:25-jdk-noble@sha256:589ff4cc3f71aab462e7048a47a0d10edf57fbccde3fceea2281e610bf5880b4
+x-native-image: &native-image ghcr.io/graalvm/native-image-community:25-ol9@sha256:7d17320ffc98d5aaffdf8c1aae929e659dc440f7a7722eb5ad2cade1ac834af7
+x-runtime-image: &runtime-image oraclelinux:9-slim@sha256:fdf4581abc841d49f63cf456ea92f8152a80b5bdc62d5409a4e77827b824265c
+
+x-application: &application
+  build:
+    context: .
+    dockerfile: containers/application.Dockerfile
+    target: application
+    args:
+      JAVA_IMAGE: *java-image
+      NATIVE_IMAGE: *native-image
+      RUNTIME_IMAGE: *runtime-image
+  image: aot-examples/03-plain-graalvm-native:local
+  cpus: 1.0
+  mem_limit: 512m
+  init: true
+
+services:
+  cli-native:
+    <<: *application
+    profiles: [cli-native]
+
+  cli-benchmark:
+    <<: *application
+    profiles: [benchmark]
+    image: aot-examples/03-plain-graalvm-native-benchmark:local
+    environment:
+      EXAMPLE_ID: 03-plain-graalvm-native
+    build:
+      context: .
+      dockerfile: containers/application.Dockerfile
+      target: benchmark
+      args:
+        JAVA_IMAGE: *java-image
+        NATIVE_IMAGE: *native-image
+        RUNTIME_IMAGE: *runtime-image
+    volumes:
+      - ../../results:/results
+      - ../../benchmark:/benchmark:ro
+
+  gradle:
+    profiles: [tools]
+    image: aot-examples/03-plain-graalvm-native-gradle-tools:local
+    build:
+      context: .
+      dockerfile: containers/gradle.Dockerfile
+    working_dir: /workspace
+    cpus: 2.0
+    mem_limit: 1g
+    volumes:
+      - .:/workspace
+      - gradle-cache:/root/.gradle
+    entrypoint: []
+
+  jdk:
+    profiles: [tools]
+    image: *java-image
+    entrypoint: []
+
+  native-toolchain:
+    profiles: [tools]
+    image: *native-image
+    entrypoint: [native-image]
+
+volumes:
+  gradle-cache:

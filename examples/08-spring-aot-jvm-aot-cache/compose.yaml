@@ -1,0 +1,90 @@
+name: aot-example-08-spring-aot-jvm-aot-cache
+
+x-java-image: &java-image eclipse-temurin:25-jdk-noble@sha256:589ff4cc3f71aab462e7048a47a0d10edf57fbccde3fceea2281e610bf5880b4
+
+x-application: &application
+  build:
+    context: .
+    dockerfile: containers/application.Dockerfile
+    target: application
+    args:
+      JAVA_IMAGE: *java-image
+      TRAIN_REQUESTS: ${TRAIN_REQUESTS:-200}
+      TRAIN_ITERATIONS: ${TRAIN_ITERATIONS:-100000}
+  image: aot-examples/08-spring-aot-jvm-aot-cache:local
+  cpus: 1.0
+  mem_limit: 512m
+  init: true
+
+services:
+  spring-combined:
+    <<: *application
+    profiles: [spring-combined]
+    ports:
+      - "127.0.0.1:${PORT:-8080}:8080"
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, http://localhost:8080/ready]
+      interval: 2s
+      timeout: 1s
+      retries: 30
+      start_period: 5s
+
+  http-benchmark:
+    <<: *application
+    profiles: [benchmark]
+    image: aot-examples/08-spring-aot-jvm-aot-cache-benchmark:local
+    environment:
+      EXAMPLE_ID: 08-spring-aot-jvm-aot-cache
+    build: &benchmark-build
+      context: .
+      dockerfile: containers/application.Dockerfile
+      target: benchmark
+      args:
+        JAVA_IMAGE: *java-image
+        TRAIN_REQUESTS: ${TRAIN_REQUESTS:-200}
+        TRAIN_ITERATIONS: ${TRAIN_ITERATIONS:-100000}
+    depends_on:
+      http-load-client:
+        condition: service_healthy
+    volumes:
+      - ../../results:/results
+      - ../../benchmark:/benchmark:ro
+
+  http-load-client:
+    <<: *application
+    profiles: [benchmark]
+    image: aot-examples/08-spring-aot-jvm-aot-cache-benchmark:local
+    build: *benchmark-build
+    cpus: 2.0
+    mem_limit: 256m
+    entrypoint: [python3, /benchmark/http_load_server.py]
+    volumes:
+      - ../../results:/results
+      - ../../benchmark:/benchmark:ro
+    healthcheck:
+      test: [CMD, python3, -c, "import urllib.request; urllib.request.urlopen('http://localhost:9000/ready', timeout=1)"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+
+  gradle:
+    profiles: [tools]
+    image: aot-examples/08-spring-aot-jvm-aot-cache-gradle-tools:local
+    build:
+      context: .
+      dockerfile: containers/gradle.Dockerfile
+    working_dir: /workspace
+    cpus: 2.0
+    mem_limit: 2g
+    volumes:
+      - .:/workspace
+      - gradle-cache:/root/.gradle
+    entrypoint: []
+
+  jdk:
+    profiles: [tools]
+    image: *java-image
+    entrypoint: []
+
+volumes:
+  gradle-cache:

@@ -1,0 +1,98 @@
+name: aot-example-07-spring-aot-graalvm-native
+
+x-java-image: &java-image eclipse-temurin:25-jdk-noble@sha256:589ff4cc3f71aab462e7048a47a0d10edf57fbccde3fceea2281e610bf5880b4
+
+x-native-image: &native-image ghcr.io/graalvm/native-image-community:25-ol9@sha256:7d17320ffc98d5aaffdf8c1aae929e659dc440f7a7722eb5ad2cade1ac834af7
+x-runtime-image: &runtime-image oraclelinux:9-slim@sha256:fdf4581abc841d49f63cf456ea92f8152a80b5bdc62d5409a4e77827b824265c
+
+x-application: &application
+  build:
+    context: .
+    dockerfile: containers/application.Dockerfile
+    target: application
+    args:
+      JAVA_IMAGE: *java-image
+      NATIVE_IMAGE: *native-image
+      RUNTIME_IMAGE: *runtime-image
+  image: aot-examples/07-spring-aot-graalvm-native:local
+  cpus: 1.0
+  mem_limit: 512m
+  init: true
+
+services:
+  spring-native:
+    <<: *application
+    profiles: [spring-native]
+    ports:
+      - "127.0.0.1:${PORT:-8080}:8080"
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, http://localhost:8080/ready]
+      interval: 2s
+      timeout: 1s
+      retries: 30
+      start_period: 5s
+
+  http-benchmark:
+    <<: *application
+    profiles: [benchmark]
+    image: aot-examples/07-spring-aot-graalvm-native-benchmark:local
+    environment:
+      EXAMPLE_ID: 07-spring-aot-graalvm-native
+    build: &benchmark-build
+      context: .
+      dockerfile: containers/application.Dockerfile
+      target: benchmark
+      args:
+        JAVA_IMAGE: *java-image
+        NATIVE_IMAGE: *native-image
+        RUNTIME_IMAGE: *runtime-image
+    depends_on:
+      http-load-client:
+        condition: service_healthy
+    volumes:
+      - ../../results:/results
+      - ../../benchmark:/benchmark:ro
+
+  http-load-client:
+    <<: *application
+    profiles: [benchmark]
+    image: aot-examples/07-spring-aot-graalvm-native-benchmark:local
+    build: *benchmark-build
+    cpus: 2.0
+    mem_limit: 256m
+    entrypoint: [python3, /benchmark/http_load_server.py]
+    volumes:
+      - ../../results:/results
+      - ../../benchmark:/benchmark:ro
+    healthcheck:
+      test: [CMD, python3, -c, "import urllib.request; urllib.request.urlopen('http://localhost:9000/ready', timeout=1)"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+
+  gradle:
+    profiles: [tools]
+    image: aot-examples/07-spring-aot-graalvm-native-gradle-tools:local
+    build:
+      context: .
+      dockerfile: containers/gradle.Dockerfile
+    working_dir: /workspace
+    cpus: 2.0
+    mem_limit: 6g
+    volumes:
+      - .:/workspace
+      - gradle-cache:/root/.gradle
+    entrypoint: []
+
+  jdk:
+    profiles: [tools]
+    image: *java-image
+    entrypoint: []
+
+  native-toolchain:
+    profiles: [tools]
+    image: *native-image
+    entrypoint: [native-image]
+
+volumes:
+  gradle-cache:

@@ -1,0 +1,162 @@
+name: aot-example-09-combined-comparison
+
+x-java-image: &java-image eclipse-temurin:25-jdk-noble@sha256:589ff4cc3f71aab462e7048a47a0d10edf57fbccde3fceea2281e610bf5880b4
+
+x-native-image: &native-image ghcr.io/graalvm/native-image-community:25-ol9@sha256:7d17320ffc98d5aaffdf8c1aae929e659dc440f7a7722eb5ad2cade1ac834af7
+x-runtime-image: &runtime-image oraclelinux:9-slim@sha256:fdf4581abc841d49f63cf456ea92f8152a80b5bdc62d5409a4e77827b824265c
+
+x-application: &application
+  build:
+    context: .
+    dockerfile: containers/application.Dockerfile
+    target: application
+    args:
+      JAVA_IMAGE: *java-image
+      NATIVE_IMAGE: *native-image
+      RUNTIME_IMAGE: *runtime-image
+      TRAIN_REQUESTS: ${TRAIN_REQUESTS:-200}
+      TRAIN_ITERATIONS: ${TRAIN_ITERATIONS:-100000}
+  image: aot-examples/09-combined-comparison:local
+  cpus: 1.0
+  mem_limit: 512m
+  init: true
+
+services:
+  spring-combined:
+    <<: *application
+    profiles: [spring-combined]
+    ports:
+      - "127.0.0.1:${PORT:-8080}:8080"
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, http://localhost:8080/ready]
+      interval: 2s
+      timeout: 1s
+      retries: 30
+      start_period: 5s
+
+  spring-baseline:
+    <<: *application
+    entrypoint: ["java", "-Xmx256m", "-XX:+UseG1GC", "-Dspring.aot.enabled=false", "-jar", "/app/plain/catalog-service.jar"]
+    profiles: [spring-baseline]
+    ports:
+      - "127.0.0.1:${PORT:-8080}:8080"
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, http://localhost:8080/ready]
+      interval: 2s
+      timeout: 1s
+      retries: 30
+      start_period: 5s
+
+  spring-aot:
+    <<: *application
+    entrypoint: ["java", "-Xmx256m", "-XX:+UseG1GC", "-Dspring.aot.enabled=true", "-jar", "/app/aot/catalog-service.jar"]
+    profiles: [spring-aot]
+    ports:
+      - "127.0.0.1:${PORT:-8080}:8080"
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, http://localhost:8080/ready]
+      interval: 2s
+      timeout: 1s
+      retries: 30
+      start_period: 5s
+
+  spring-jvm-cache:
+    <<: *application
+    entrypoint: ["java", "-Xmx256m", "-XX:+UseG1GC", "-Dspring.aot.enabled=false", "-XX:AOTMode=on", "-XX:AOTCache=/app/jvm-cache.aot", "-jar", "/app/plain/catalog-service.jar"]
+    profiles: [spring-jvm-cache]
+    ports:
+      - "127.0.0.1:${PORT:-8080}:8080"
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, http://localhost:8080/ready]
+      interval: 2s
+      timeout: 1s
+      retries: 30
+      start_period: 5s
+
+  spring-native:
+    <<: *application
+    profiles: [spring-native]
+    image: aot-examples/09-combined-comparison-native:local
+    build:
+      context: .
+      dockerfile: containers/application.Dockerfile
+      target: native-application
+      args:
+        JAVA_IMAGE: *java-image
+        NATIVE_IMAGE: *native-image
+        RUNTIME_IMAGE: *runtime-image
+    ports:
+      - "127.0.0.1:${PORT:-8080}:8080"
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, http://localhost:8080/ready]
+      interval: 2s
+      timeout: 1s
+      retries: 30
+      start_period: 5s
+
+  http-benchmark:
+    <<: *application
+    profiles: [benchmark]
+    image: aot-examples/09-combined-comparison-benchmark:local
+    environment:
+      EXAMPLE_ID: 09-combined-comparison
+    build: &benchmark-build
+      context: .
+      dockerfile: containers/application.Dockerfile
+      target: benchmark
+      args:
+        JAVA_IMAGE: *java-image
+        NATIVE_IMAGE: *native-image
+        RUNTIME_IMAGE: *runtime-image
+        TRAIN_REQUESTS: ${TRAIN_REQUESTS:-200}
+        TRAIN_ITERATIONS: ${TRAIN_ITERATIONS:-100000}
+    depends_on:
+      http-load-client:
+        condition: service_healthy
+    volumes:
+      - ../../results:/results
+      - ../../benchmark:/benchmark:ro
+
+  http-load-client:
+    <<: *application
+    profiles: [benchmark]
+    image: aot-examples/09-combined-comparison-benchmark:local
+    build: *benchmark-build
+    cpus: 2.0
+    mem_limit: 256m
+    entrypoint: [python3, /benchmark/http_load_server.py]
+    volumes:
+      - ../../results:/results
+      - ../../benchmark:/benchmark:ro
+    healthcheck:
+      test: [CMD, python3, -c, "import urllib.request; urllib.request.urlopen('http://localhost:9000/ready', timeout=1)"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+
+  gradle:
+    profiles: [tools]
+    image: aot-examples/09-combined-comparison-gradle-tools:local
+    build:
+      context: .
+      dockerfile: containers/gradle.Dockerfile
+    working_dir: /workspace
+    cpus: 2.0
+    mem_limit: 6g
+    volumes:
+      - .:/workspace
+      - gradle-cache:/root/.gradle
+    entrypoint: []
+
+  jdk:
+    profiles: [tools]
+    image: *java-image
+    entrypoint: []
+
+  native-toolchain:
+    profiles: [tools]
+    image: *native-image
+    entrypoint: [native-image]
+
+volumes:
+  gradle-cache:
